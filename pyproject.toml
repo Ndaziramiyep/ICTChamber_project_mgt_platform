@@ -7,7 +7,7 @@ name = "ictchamber-kanban-backend"
 version = "0.1.0"
 description = "Backend API for the ICT Chamber Kanban project management platform."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 
 dependencies = [
