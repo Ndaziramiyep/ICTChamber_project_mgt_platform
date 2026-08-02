@@ -72,10 +72,13 @@ def provide_board_management_service(
 def provide_column_management_service(
     column_repository: ColumnRepositoryInterface = Depends(provide_column_repository),
     board_repository: BoardRepositoryInterface = Depends(provide_board_repository),
+    task_repository: TaskRepositoryInterface = Depends(provide_task_repository),
 ) -> ColumnManagementService:
     """Construct the column management service with its injected repository dependencies."""
     return ColumnManagementService(
-        column_repository=column_repository, board_repository=board_repository
+        column_repository=column_repository,
+        board_repository=board_repository,
+        task_repository=task_repository,
     )
 
 

@@ -155,3 +155,138 @@ class TestUpdateAndDeleteTaskEndpoints:
 
         assert delete_response.status_code == 204
         assert list_response.json() == []
+
+
+class TestRepositionTaskEndpoint:
+    """Behavior of PATCH /api/v1/tasks/{task_identifier}/position."""
+
+    async def test_reposition_persists_the_new_order_within_the_same_column(
+        self, authenticated_test_client: AsyncClient
+    ) -> None:
+        _, column_identifier = await _create_board_and_column_and_return_identifiers(
+            authenticated_test_client
+        )
+        task_identifiers = []
+        for task_title in ["A", "B", "C"]:
+            response = await authenticated_test_client.post(
+                f"/api/v1/columns/{column_identifier}/tasks",
+                json=build_task_creation_request_payload(task_title=task_title),
+            )
+            task_identifiers.append(str(response.json()["task_identifier"]))
+        task_a, _, task_c = task_identifiers
+
+        reposition_response = await authenticated_test_client.patch(
+            f"/api/v1/tasks/{task_c}/position",
+            json={
+                "target_column_identifier": column_identifier,
+                "previous_task_identifier": None,
+                "next_task_identifier": task_a,
+            },
+        )
+        list_response = await authenticated_test_client.get(
+            f"/api/v1/columns/{column_identifier}/tasks"
+        )
+
+        assert reposition_response.status_code == 200
+        assert [task["task_title"] for task in list_response.json()] == ["C", "A", "B"]
+
+    async def test_reposition_moves_a_task_to_a_different_column(
+        self, authenticated_test_client: AsyncClient
+    ) -> None:
+        board_identifier, source_column_identifier = (
+            await _create_board_and_column_and_return_identifiers(authenticated_test_client)
+        )
+        target_column_response = await authenticated_test_client.post(
+            f"/api/v1/boards/{board_identifier}/columns",
+            json=build_column_creation_request_payload(column_title="Done"),
+        )
+        target_column_identifier = str(target_column_response.json()["column_identifier"])
+        create_response = await authenticated_test_client.post(
+            f"/api/v1/columns/{source_column_identifier}/tasks",
+            json=build_task_creation_request_payload(task_title="Move me"),
+        )
+        task_identifier = create_response.json()["task_identifier"]
+
+        reposition_response = await authenticated_test_client.patch(
+            f"/api/v1/tasks/{task_identifier}/position",
+            json={"target_column_identifier": target_column_identifier},
+        )
+        source_list_response = await authenticated_test_client.get(
+            f"/api/v1/columns/{source_column_identifier}/tasks"
+        )
+        target_list_response = await authenticated_test_client.get(
+            f"/api/v1/columns/{target_column_identifier}/tasks"
+        )
+
+        assert reposition_response.status_code == 200
+        assert reposition_response.json()["parent_column_identifier"] == target_column_identifier
+        assert source_list_response.json() == []
+        assert [task["task_title"] for task in target_list_response.json()] == ["Move me"]
+
+    async def test_returns_404_when_previous_task_identifier_is_not_in_the_target_column(
+        self, authenticated_test_client: AsyncClient
+    ) -> None:
+        _, column_identifier = await _create_board_and_column_and_return_identifiers(
+            authenticated_test_client
+        )
+        create_response = await authenticated_test_client.post(
+            f"/api/v1/columns/{column_identifier}/tasks",
+            json=build_task_creation_request_payload(),
+        )
+        task_identifier = create_response.json()["task_identifier"]
+
+        response = await authenticated_test_client.patch(
+            f"/api/v1/tasks/{task_identifier}/position",
+            json={
+                "target_column_identifier": column_identifier,
+                "previous_task_identifier": "60c72b2f9b1e8b3f1c8e4d99",
+            },
+        )
+
+        assert response.status_code == 404
+
+    async def test_returns_403_when_the_target_column_belongs_to_another_users_board(
+        self, test_http_client: AsyncClient, authenticated_test_client: AsyncClient
+    ) -> None:
+        _, column_identifier = await _create_board_and_column_and_return_identifiers(
+            authenticated_test_client
+        )
+        create_response = await authenticated_test_client.post(
+            f"/api/v1/columns/{column_identifier}/tasks",
+            json=build_task_creation_request_payload(),
+        )
+        task_identifier = create_response.json()["task_identifier"]
+
+        intruder_registration = {
+            "email_address": "position.intruder@example.com",
+            "plain_text_password": "correct-horse-battery-staple",
+            "display_name": "Intruder",
+        }
+        await test_http_client.post("/api/v1/auth/register", json=intruder_registration)
+        login_response = await test_http_client.post(
+            "/api/v1/auth/login",
+            json={
+                "email_address": intruder_registration["email_address"],
+                "plain_text_password": intruder_registration["plain_text_password"],
+            },
+        )
+        test_http_client.headers["Authorization"] = (
+            f"Bearer {login_response.json()['access_token_value']}"
+        )
+        intruders_board_response = await test_http_client.post(
+            "/api/v1/boards",
+            json=build_board_creation_request_payload(board_title="Intruder board"),
+        )
+        intruders_board_identifier = str(intruders_board_response.json()["board_identifier"])
+        intruders_column_response = await test_http_client.post(
+            f"/api/v1/boards/{intruders_board_identifier}/columns",
+            json=build_column_creation_request_payload(column_title="Intruder column"),
+        )
+        intruders_column_identifier = str(intruders_column_response.json()["column_identifier"])
+
+        response = await authenticated_test_client.patch(
+            f"/api/v1/tasks/{task_identifier}/position",
+            json={"target_column_identifier": intruders_column_identifier},
+        )
+
+        assert response.status_code == 403

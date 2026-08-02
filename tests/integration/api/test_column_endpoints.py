@@ -124,3 +124,94 @@ class TestUpdateAndDeleteColumnEndpoints:
 
         assert delete_response.status_code == 204
         assert list_response.json() == []
+
+
+class TestReorderColumnsEndpoint:
+    """Behavior of PUT /api/v1/boards/{board_identifier}/columns/reorder."""
+
+    async def _create_board_with_columns(
+        self, authenticated_test_client: AsyncClient, column_titles: list[str]
+    ) -> tuple[str, list[str]]:
+        """Create a board with the given columns, returning (board_identifier, column_ids)."""
+        board_identifier = await self._create_board(authenticated_test_client)
+        column_identifiers = []
+        for column_title in column_titles:
+            response = await authenticated_test_client.post(
+                f"/api/v1/boards/{board_identifier}/columns",
+                json=build_column_creation_request_payload(column_title=column_title),
+            )
+            column_identifiers.append(str(response.json()["column_identifier"]))
+        return board_identifier, column_identifiers
+
+    async def _create_board(self, authenticated_test_client: AsyncClient) -> str:
+        return await _create_board_and_return_its_identifier(authenticated_test_client)
+
+    async def test_reorder_persists_across_a_fresh_read(
+        self, authenticated_test_client: AsyncClient
+    ) -> None:
+        board_identifier, column_identifiers = await self._create_board_with_columns(
+            authenticated_test_client, ["To Do", "Doing", "Done"]
+        )
+        reversed_identifiers = list(reversed(column_identifiers))
+
+        reorder_response = await authenticated_test_client.put(
+            f"/api/v1/boards/{board_identifier}/columns/reorder",
+            json={"ordered_column_identifiers": reversed_identifiers},
+        )
+        list_response = await authenticated_test_client.get(
+            f"/api/v1/boards/{board_identifier}/columns"
+        )
+
+        assert reorder_response.status_code == 200
+        assert [
+            column["column_identifier"] for column in reorder_response.json()
+        ] == reversed_identifiers
+        assert [
+            column["column_identifier"] for column in list_response.json()
+        ] == reversed_identifiers
+        assert [column["column_display_order"] for column in list_response.json()] == [0, 1, 2]
+
+    async def test_returns_404_when_the_reorder_list_omits_a_column(
+        self, authenticated_test_client: AsyncClient
+    ) -> None:
+        board_identifier, column_identifiers = await self._create_board_with_columns(
+            authenticated_test_client, ["To Do", "Doing"]
+        )
+
+        response = await authenticated_test_client.put(
+            f"/api/v1/boards/{board_identifier}/columns/reorder",
+            json={"ordered_column_identifiers": [column_identifiers[0]]},
+        )
+
+        assert response.status_code == 404
+
+    async def test_returns_403_when_a_non_owner_attempts_to_reorder(
+        self, test_http_client: AsyncClient, authenticated_test_client: AsyncClient
+    ) -> None:
+        board_identifier, column_identifiers = await self._create_board_with_columns(
+            authenticated_test_client, ["To Do", "Doing"]
+        )
+
+        intruder_registration = {
+            "email_address": "reorder.intruder@example.com",
+            "plain_text_password": "correct-horse-battery-staple",
+            "display_name": "Intruder",
+        }
+        await test_http_client.post("/api/v1/auth/register", json=intruder_registration)
+        login_response = await test_http_client.post(
+            "/api/v1/auth/login",
+            json={
+                "email_address": intruder_registration["email_address"],
+                "plain_text_password": intruder_registration["plain_text_password"],
+            },
+        )
+        test_http_client.headers["Authorization"] = (
+            f"Bearer {login_response.json()['access_token_value']}"
+        )
+
+        response = await test_http_client.put(
+            f"/api/v1/boards/{board_identifier}/columns/reorder",
+            json={"ordered_column_identifiers": list(reversed(column_identifiers))},
+        )
+
+        assert response.status_code == 403

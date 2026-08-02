@@ -8,6 +8,7 @@ from app.api.v1.dependencies.current_user_dependency import get_current_authenti
 from app.api.v1.dependencies.service_providers import provide_column_management_service
 from app.api.v1.schemas.column_schemas import (
     ColumnCreationRequestSchema,
+    ColumnReorderRequestSchema,
     ColumnResponseSchema,
     ColumnUpdateRequestSchema,
 )
@@ -62,6 +63,27 @@ async def list_columns_for_board(
         requesting_user_identifier=current_authenticated_user.user_identifier,
     )
     return [_map_column_entity_to_response(column_entity) for column_entity in column_entities]
+
+
+@column_router.put(
+    "/boards/{board_identifier}/columns/reorder",
+    response_model=list[ColumnResponseSchema],
+)
+async def reorder_columns_for_board(
+    board_identifier: str,
+    column_reorder_request: ColumnReorderRequestSchema,
+    current_authenticated_user: RegisteredUserEntity = Depends(get_current_authenticated_user),
+    column_management_service: ColumnManagementService = Depends(provide_column_management_service),
+) -> list[ColumnResponseSchema]:
+    """Persist a new left-to-right display order for every column belonging to the given board."""
+    reordered_column_entities = await column_management_service.reorder_columns_for_board(
+        parent_board_identifier=board_identifier,
+        requesting_user_identifier=current_authenticated_user.user_identifier,
+        ordered_column_identifiers=column_reorder_request.ordered_column_identifiers,
+    )
+    return [
+        _map_column_entity_to_response(column_entity) for column_entity in reordered_column_entities
+    ]
 
 
 @column_router.get("/columns/{column_identifier}", response_model=ColumnResponseSchema)

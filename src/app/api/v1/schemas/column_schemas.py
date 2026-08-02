@@ -19,6 +19,15 @@ class ColumnUpdateRequestSchema(BaseModel):
     column_title: str = Field(min_length=1, max_length=200)
 
 
+class ColumnReorderRequestSchema(BaseModel):
+    """Payload specifying the full new left-to-right order of a board's columns.
+
+    Must contain every column currently belonging to the board, each exactly once.
+    """
+
+    ordered_column_identifiers: list[str] = Field(min_length=1)
+
+
 class ColumnResponseSchema(BaseModel):
     """Public representation of a board column."""
 

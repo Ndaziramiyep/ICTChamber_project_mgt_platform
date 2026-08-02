@@ -109,3 +109,40 @@ One dated entry per vertical slice, recording the red/green/refactor cycle at a 
   proving a non-owner gets 403 listing tasks in a column they do not own, and a test asserting a
   created task carries its board's denormalized identifier correctly.
 - 101 tests passing (unit + integration) at the end of this slice.
+
+## 2026-08-02 — Drag-and-drop: column and task reordering, plus a deferred cascade fix
+
+- Context: the frontend flagged that `GET /boards/{id}/columns` and each column's task list are
+  always returned in creation order, so its drag-and-drop UI (`use-reorderable-columns.ts`,
+  `use-board-task-order.ts`) could only reorder client-side and reset on reload — no endpoint
+  persisted column order, task order, or a task's column.
+- RED (pre-existing, found while reading the code this slice touches, not introduced by it):
+  `tests/unit/application/test_column_management_service.py` was failing 9/9 on `main` —
+  `ColumnManagementService.__init__()` did not accept the `task_repository` the test file's
+  fixtures already constructed it with, so the "delete cascades to every task in the column" case
+  (deferred back in the Columns-slice entry above) was never wired up. Fixed as GREEN alongside
+  this slice since it's the same constructor/class being changed.
+- GREEN: `ColumnManagementService` now takes `task_repository` and calls
+  `delete_tasks_by_parent_column_identifier` before deleting the column. Added
+  `reorder_columns_for_board`: validates the given identifier list is exactly the board's existing
+  columns (each once), then persists `column_display_order = 0..N-1` in the requested sequence,
+  raising `ColumnDoesNotBelongToBoardError` (404) on a mismatched list. Added
+  `TaskManagementService.reposition_task_owned_by_authenticated_user`: resolves the moving task and
+  the target column (both ownership-checked independently, so a cross-board move is rejected with
+  403 rather than silently re-parenting a task into a board the requester doesn't own), locates the
+  insertion point among the target column's existing tasks from `previous_task_identifier`/
+  `next_task_identifier` (raising `InvalidReorderTargetError`, 404, if either doesn't belong to
+  that column or they aren't adjacent), and either computes a single midpoint position via the
+  existing `calculate_position_between_neighbors` value object (the common case — one write) or,
+  when `requires_position_rebalance` trips, rewrites every sibling's position via
+  `generate_sequential_position_values` (the rare case). Added `PUT
+  /boards/{board_identifier}/columns/reorder` and `PATCH /tasks/{task_identifier}/position`, their
+  request schemas, and wired `task_repository` into `provide_column_management_service`.
+- Added unit tests covering both new service methods (ownership/not-found/invalid-target errors,
+  top/bottom/midpoint placement, cross-column move, and the rebalance path) and integration tests
+  proving both endpoints persist across a fresh `GET` (not just reflected in the response), plus
+  the 403/404 authorization and validation boundaries end-to-end.
+- REFACTOR: none needed.
+- Updated `README.md`'s frontend integration guide to document both endpoints and drop the
+  now-inaccurate "reordering endpoints do not exist yet" caveat.
+- 125 tests passing (unit + integration) at the end of this slice.

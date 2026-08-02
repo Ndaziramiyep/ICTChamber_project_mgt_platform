@@ -8,6 +8,7 @@ from app.api.v1.dependencies.current_user_dependency import get_current_authenti
 from app.api.v1.dependencies.service_providers import provide_task_management_service
 from app.api.v1.schemas.task_schemas import (
     TaskCreationRequestSchema,
+    TaskRepositionRequestSchema,
     TaskResponseSchema,
     TaskUpdateRequestSchema,
 )
@@ -96,6 +97,26 @@ async def update_task_by_identifier(
         task_description=task_update_request.task_description,
     )
     return _map_task_entity_to_response(updated_task_entity)
+
+
+@task_router.patch("/tasks/{task_identifier}/position", response_model=TaskResponseSchema)
+async def reposition_task_by_identifier(
+    task_identifier: str,
+    task_reposition_request: TaskRepositionRequestSchema,
+    current_authenticated_user: RegisteredUserEntity = Depends(get_current_authenticated_user),
+    task_management_service: TaskManagementService = Depends(provide_task_management_service),
+) -> TaskResponseSchema:
+    """Move a task to a new column and/or position among its new siblings."""
+    repositioned_task_entity = (
+        await task_management_service.reposition_task_owned_by_authenticated_user(
+            task_identifier=task_identifier,
+            requesting_user_identifier=current_authenticated_user.user_identifier,
+            target_column_identifier=task_reposition_request.target_column_identifier,
+            previous_task_identifier=task_reposition_request.previous_task_identifier,
+            next_task_identifier=task_reposition_request.next_task_identifier,
+        )
+    )
+    return _map_task_entity_to_response(repositioned_task_entity)
 
 
 @task_router.delete("/tasks/{task_identifier}", status_code=status.HTTP_204_NO_CONTENT)

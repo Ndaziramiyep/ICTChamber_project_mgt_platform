@@ -21,6 +21,18 @@ class TaskUpdateRequestSchema(BaseModel):
     task_description: str | None = Field(default=None, max_length=4000)
 
 
+class TaskRepositionRequestSchema(BaseModel):
+    """Payload specifying a task's new column and position among its new siblings.
+
+    The task is placed immediately after ``previous_task_identifier`` and before
+    ``next_task_identifier``; either may be omitted to mean the top/bottom of the target column.
+    """
+
+    target_column_identifier: str
+    previous_task_identifier: str | None = None
+    next_task_identifier: str | None = None
+
+
 class TaskResponseSchema(BaseModel):
     """Public representation of a Kanban task."""
 

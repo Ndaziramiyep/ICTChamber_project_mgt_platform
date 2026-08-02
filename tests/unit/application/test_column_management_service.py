@@ -8,11 +8,15 @@ import pytest
 from pytest_mock import MockerFixture
 
 from app.application.services.column_management_service import ColumnManagementService
+from app.domain.entities.board_column_entity import BoardColumnEntity
 from app.domain.exceptions.board_domain_exceptions import (
     BoardNotFoundError,
     UnauthorizedBoardAccessError,
 )
-from app.domain.exceptions.column_domain_exceptions import ColumnNotFoundError
+from app.domain.exceptions.column_domain_exceptions import (
+    ColumnDoesNotBelongToBoardError,
+    ColumnNotFoundError,
+)
 from app.domain.repositories.board_repository_interface import BoardRepositoryInterface
 from app.domain.repositories.column_repository_interface import ColumnRepositoryInterface
 from app.domain.repositories.task_repository_interface import TaskRepositoryInterface
@@ -288,3 +292,154 @@ class TestUpdateAndDeleteColumn:
         fake_task_repository.delete_tasks_by_parent_column_identifier.assert_awaited_once_with(
             owned_column_entity.column_identifier
         )
+
+
+class TestReorderColumnsForBoard:
+    """Behavior of ColumnManagementService.reorder_columns_for_board."""
+
+    def _stub_board_with_columns(
+        self,
+        fake_board_repository: AsyncMock,
+        fake_column_repository: AsyncMock,
+        column_entities: list[BoardColumnEntity],
+    ) -> None:
+        fake_board_repository.find_board_by_identifier.return_value = build_project_board_entity(
+            board_identifier=PARENT_BOARD_IDENTIFIER, owning_user_identifier=OWNING_USER_IDENTIFIER
+        )
+        fake_column_repository.find_columns_by_parent_board_identifier.return_value = (
+            column_entities
+        )
+        fake_column_repository.update_column_record.side_effect = (
+            lambda column_entity: column_entity
+        )
+
+    async def test_persists_the_requested_display_order(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        first_column = build_board_column_entity(
+            column_identifier="column-1",
+            parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+            column_display_order=0,
+        )
+        second_column = build_board_column_entity(
+            column_identifier="column-2",
+            parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+            column_display_order=1,
+        )
+        self._stub_board_with_columns(
+            fake_board_repository, fake_column_repository, [first_column, second_column]
+        )
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        reordered_column_entities = await column_management_service.reorder_columns_for_board(
+            parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+            requesting_user_identifier=OWNING_USER_IDENTIFIER,
+            ordered_column_identifiers=["column-2", "column-1"],
+        )
+
+        assert [column.column_identifier for column in reordered_column_entities] == [
+            "column-2",
+            "column-1",
+        ]
+        assert second_column.column_display_order == 0
+        assert first_column.column_display_order == 1
+
+    async def test_raises_board_not_found_error_for_an_unknown_board(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        fake_board_repository.find_board_by_identifier.return_value = None
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        with pytest.raises(BoardNotFoundError):
+            await column_management_service.reorder_columns_for_board(
+                parent_board_identifier="missing-board-id",
+                requesting_user_identifier=OWNING_USER_IDENTIFIER,
+                ordered_column_identifiers=[],
+            )
+
+    async def test_raises_unauthorized_board_access_error_for_a_non_owning_user(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        fake_board_repository.find_board_by_identifier.return_value = build_project_board_entity(
+            board_identifier=PARENT_BOARD_IDENTIFIER, owning_user_identifier=OWNING_USER_IDENTIFIER
+        )
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        with pytest.raises(UnauthorizedBoardAccessError):
+            await column_management_service.reorder_columns_for_board(
+                parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+                requesting_user_identifier=OTHER_USER_IDENTIFIER,
+                ordered_column_identifiers=[],
+            )
+
+    async def test_raises_column_does_not_belong_to_board_error_for_an_unknown_identifier(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        only_column = build_board_column_entity(
+            column_identifier="column-1", parent_board_identifier=PARENT_BOARD_IDENTIFIER
+        )
+        self._stub_board_with_columns(fake_board_repository, fake_column_repository, [only_column])
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        with pytest.raises(ColumnDoesNotBelongToBoardError):
+            await column_management_service.reorder_columns_for_board(
+                parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+                requesting_user_identifier=OWNING_USER_IDENTIFIER,
+                ordered_column_identifiers=["column-from-another-board"],
+            )
+
+    async def test_raises_column_does_not_belong_to_board_error_when_a_column_is_missing(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        first_column = build_board_column_entity(
+            column_identifier="column-1", parent_board_identifier=PARENT_BOARD_IDENTIFIER
+        )
+        second_column = build_board_column_entity(
+            column_identifier="column-2", parent_board_identifier=PARENT_BOARD_IDENTIFIER
+        )
+        self._stub_board_with_columns(
+            fake_board_repository, fake_column_repository, [first_column, second_column]
+        )
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        with pytest.raises(ColumnDoesNotBelongToBoardError):
+            await column_management_service.reorder_columns_for_board(
+                parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+                requesting_user_identifier=OWNING_USER_IDENTIFIER,
+                ordered_column_identifiers=["column-1"],
+            )

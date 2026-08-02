@@ -7,8 +7,10 @@ from datetime import UTC, datetime
 from app.application.services.board_access_guard import find_board_and_ensure_ownership
 from app.application.services.column_access_guard import find_column_and_ensure_board_ownership
 from app.domain.entities.board_column_entity import BoardColumnEntity
+from app.domain.exceptions.column_domain_exceptions import ColumnDoesNotBelongToBoardError
 from app.domain.repositories.board_repository_interface import BoardRepositoryInterface
 from app.domain.repositories.column_repository_interface import ColumnRepositoryInterface
+from app.domain.repositories.task_repository_interface import TaskRepositoryInterface
 
 
 class ColumnManagementService:
@@ -18,10 +20,12 @@ class ColumnManagementService:
         self,
         column_repository: ColumnRepositoryInterface,
         board_repository: BoardRepositoryInterface,
+        task_repository: TaskRepositoryInterface,
     ) -> None:
         """Store the repositories used to manage columns and to validate their parent board."""
         self._column_repository = column_repository
         self._board_repository = board_repository
+        self._task_repository = task_repository
 
     async def create_column_for_board(
         self, parent_board_identifier: str, requesting_user_identifier: str, column_title: str
@@ -88,11 +92,56 @@ class ColumnManagementService:
     async def delete_column_owned_by_authenticated_user(
         self, column_identifier: str, requesting_user_identifier: str
     ) -> None:
-        """Delete the given column if its parent board is owned by the requester."""
+        """Delete the given column, cascading to its tasks, if its parent board is owned by the
+        requester."""
         await find_column_and_ensure_board_ownership(
             self._column_repository,
             self._board_repository,
             column_identifier,
             requesting_user_identifier,
         )
+        await self._task_repository.delete_tasks_by_parent_column_identifier(column_identifier)
         await self._column_repository.delete_column_by_identifier(column_identifier)
+
+    async def reorder_columns_for_board(
+        self,
+        parent_board_identifier: str,
+        requesting_user_identifier: str,
+        ordered_column_identifiers: list[str],
+    ) -> list[BoardColumnEntity]:
+        """Persist a new left-to-right display order for every column of the given board.
+
+        ``ordered_column_identifiers`` must contain every column currently belonging to the board,
+        each exactly once, in their desired new order.
+        """
+        await find_board_and_ensure_ownership(
+            self._board_repository, parent_board_identifier, requesting_user_identifier
+        )
+
+        existing_column_entities = (
+            await self._column_repository.find_columns_by_parent_board_identifier(
+                parent_board_identifier
+            )
+        )
+        existing_columns_by_identifier = {
+            column_entity.column_identifier: column_entity
+            for column_entity in existing_column_entities
+        }
+        if len(ordered_column_identifiers) != len(existing_column_entities) or set(
+            ordered_column_identifiers
+        ) != set(existing_columns_by_identifier.keys()):
+            raise ColumnDoesNotBelongToBoardError(
+                "The reorder request must include every column belonging to this board exactly "
+                "once."
+            )
+
+        current_utc_moment = datetime.now(UTC)
+        reordered_column_entities: list[BoardColumnEntity] = []
+        for new_display_order, column_identifier in enumerate(ordered_column_identifiers):
+            column_entity = existing_columns_by_identifier[column_identifier]
+            column_entity.column_display_order = new_display_order
+            column_entity.updated_at = current_utc_moment
+            reordered_column_entities.append(
+                await self._column_repository.update_column_record(column_entity)
+            )
+        return reordered_column_entities
