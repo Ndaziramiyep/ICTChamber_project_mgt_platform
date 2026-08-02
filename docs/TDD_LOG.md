@@ -145,4 +145,4 @@ One dated entry per vertical slice, recording the red/green/refactor cycle at a 
 - REFACTOR: none needed.
 - Updated `README.md`'s frontend integration guide to document both endpoints and drop the
   now-inaccurate "reordering endpoints do not exist yet" caveat.
-- 125 tests passing (unit + integration) at the end of this slice.
+- 127 tests passing (unit + integration) at the end of this slice.

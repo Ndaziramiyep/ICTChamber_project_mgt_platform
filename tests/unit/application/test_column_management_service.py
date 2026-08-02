@@ -416,6 +416,36 @@ class TestReorderColumnsForBoard:
                 ordered_column_identifiers=["column-from-another-board"],
             )
 
+    async def test_raises_column_does_not_belong_to_board_error_for_a_duplicate_identifier(
+        self,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+        fake_task_repository: AsyncMock,
+    ) -> None:
+        first_column = build_board_column_entity(
+            column_identifier="column-1", parent_board_identifier=PARENT_BOARD_IDENTIFIER
+        )
+        second_column = build_board_column_entity(
+            column_identifier="column-2", parent_board_identifier=PARENT_BOARD_IDENTIFIER
+        )
+        self._stub_board_with_columns(
+            fake_board_repository, fake_column_repository, [first_column, second_column]
+        )
+        column_management_service = ColumnManagementService(
+            column_repository=fake_column_repository,
+            board_repository=fake_board_repository,
+            task_repository=fake_task_repository,
+        )
+
+        with pytest.raises(ColumnDoesNotBelongToBoardError):
+            await column_management_service.reorder_columns_for_board(
+                parent_board_identifier=PARENT_BOARD_IDENTIFIER,
+                requesting_user_identifier=OWNING_USER_IDENTIFIER,
+                ordered_column_identifiers=["column-1", "column-1"],
+            )
+
+        fake_column_repository.update_column_record.assert_not_awaited()
+
     async def test_raises_column_does_not_belong_to_board_error_when_a_column_is_missing(
         self,
         fake_column_repository: AsyncMock,

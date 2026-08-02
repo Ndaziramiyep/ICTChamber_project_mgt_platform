@@ -397,6 +397,43 @@ class TestRepositionTaskOwnedByAuthenticatedUser:
 
         assert repositioned_task.task_position_value == 1500.0
 
+    async def test_appends_to_the_bottom_when_both_neighbors_are_none_and_siblings_exist(
+        self,
+        task_management_service: TaskManagementService,
+        fake_task_repository: AsyncMock,
+        fake_column_repository: AsyncMock,
+        fake_board_repository: AsyncMock,
+    ) -> None:
+        moving_task = build_kanban_task_entity(
+            task_identifier="moving-task", task_position_value=500.0
+        )
+        sibling_a = build_kanban_task_entity(
+            task_identifier="sibling-a", task_position_value=1000.0
+        )
+        sibling_b = build_kanban_task_entity(
+            task_identifier="sibling-b", task_position_value=2000.0
+        )
+        self._stub_moving_task_and_target_column(
+            fake_task_repository,
+            fake_column_repository,
+            fake_board_repository,
+            moving_task,
+            PARENT_COLUMN_IDENTIFIER,
+            [sibling_a, sibling_b],
+        )
+
+        repositioned_task = (
+            await task_management_service.reposition_task_owned_by_authenticated_user(
+                task_identifier=moving_task.task_identifier,
+                requesting_user_identifier=OWNING_USER_IDENTIFIER,
+                target_column_identifier=PARENT_COLUMN_IDENTIFIER,
+                previous_task_identifier=None,
+                next_task_identifier=None,
+            )
+        )
+
+        assert repositioned_task.task_position_value == 2000.0 + DEFAULT_POSITION_GAP
+
     async def test_moves_task_to_a_different_column_updates_parent_identifiers(
         self,
         task_management_service: TaskManagementService,
